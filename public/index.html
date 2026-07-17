@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Task Worker Telemetry — Control Room</title>
+<style>
+  :root {
+    --bg: #0a0d10;
+    --bg-grid: #0d1116;
+    --panel: #12161b;
+    --panel-raised: #171c22;
+    --border: #232a33;
+    --border-soft: #1a2027;
+    --text: #e7ebef;
+    --text-muted: #7c8794;
+    --text-faint: #4b5561;
+    --accent: #ffb86b;
+    --accent-dim: #8a6438;
+    --state-waiting: #f5c542;
+    --state-active: #4fa3f7;
+    --state-completed: #4cd787;
+    --state-failed: #f0554b;
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+    --sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background-image:
+      linear-gradient(var(--bg-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+    background-size: 28px 28px;
+    min-height: 100vh;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  button, select, textarea, input {
+    font-family: inherit;
+  }
+
+  /* ---------- Header ---------- */
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10, 13, 16, 0.85);
+    backdrop-filter: blur(6px);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .brand .mark {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    align-self: center;
+  }
+
+  .brand h1 {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+
+  .brand .sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0.06em;
+  }
+
+  .status-strip {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .status-strip .item { display: flex; align-items: center; gap: 7px; }
+
+  .pulse-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--state-completed);
+    box-shadow: 0 0 8px var(--state-completed);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  /* ---------- Layout ---------- */
+
+  main {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    gap: 18px;
+    padding: 22px 28px 40px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .panel-head .eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .panel-head .count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--panel-raised);
+    border: 1px solid var(--border-soft);
+    padding: 2px 8px;
+    border-radius: 20px;
+  }
+
+  /* ---------- Pipeline canvas panel ---------- */
+
+  #pipelineCanvas {
+    display: block;
+    width: 100%;
+    height: 420px;
+  }
+
+  .legend {
+    display: flex;
+    gap: 16px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border-soft);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+  }
+
+  .legend .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+
+  /* ---------- Submit panel ---------- */
+
+  .field { padding: 14px 16px; border-bottom: 1px solid var(--border-soft); }
+  .field:last-of-type { border-bottom: none; }
+
+  .field label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 7px;
+  }
+
+  select, textarea {
+    width: 100%;
+    background: var(--panel-raised);
+    border: 1px solid var(--border-soft);
+    color: var(--text);
+    padding: 9px 10px;
+    border-radius: var(--radius);
+    font-size: 13px;
+  }
+
+  textarea {
+    font-family: var(--mono);
+    font-size: 12px;
+    resize: vertical;
+    min-height: 64px;
+  }
+
+  select:focus, textarea:focus { border-color: var(--accent-dim); }
+
+  .submit-row { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+  #submitBtn {
+    background: var(--accent);
+    color: #1a1305;
+    border: none;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    padding: 11px 14px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: transform 0.08s ease, filter 0.15s ease;
+  }
+
+  #submitBtn:hover { filter: brightness(1.08); }
+  #submitBtn:active { transform: scale(0.98); }
+  #submitBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .feedback {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    min-height: 16px;
+  }
+  .feedback.ok { color: var(--state-completed); }
+  .feedback.err { color: var(--state-failed); }
+
+  /* ---------- Job list ---------- */
+
+  .job-list-panel { grid-column: 1 / -1; }
+
+  .job-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+  .job-table thead th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .job-table tbody td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--text);
+  }
+
+  .job-table tbody tr:last-child td { border-bottom: none; }
+  .job-table tbody tr:hover { background: var(--panel-raised); }
+
+  .empty-row td {
+    text-align: center;
+    color: var(--text-faint);
+    padding: 30px 16px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px 3px 7px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+  }
+
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  .badge.waiting   { color: var(--state-waiting);   background: color-mix(in srgb, var(--state-waiting) 14%, transparent);   border-color: color-mix(in srgb, var(--state-waiting) 35%, transparent); }
+  .badge.active    { color: var(--state-active);    background: color-mix(in srgb, var(--state-active) 14%, transparent);    border-color: color-mix(in srgb, var(--state-active) 35%, transparent); }
+  .badge.completed { color: var(--state-completed); background: color-mix(in srgb, var(--state-completed) 14%, transparent); border-color: color-mix(in srgb, var(--state-completed) 35%, transparent); }
+  .badge.failed    { color: var(--state-failed);    background: color-mix(in srgb, var(--state-failed) 14%, transparent);    border-color: color-mix(in srgb, var(--state-failed) 35%, transparent); }
+  .badge.unknown, .badge.delayed { color: var(--text-muted); background: var(--panel-raised); border-color: var(--border-soft); }
+
+  .badge.waiting .dot   { background: var(--state-waiting); }
+  .badge.active .dot    { background: var(--state-active); box-shadow: 0 0 6px var(--state-active); }
+  .badge.completed .dot { background: var(--state-completed); }
+  .badge.failed .dot    { background: var(--state-failed); }
+  .badge.unknown .dot, .badge.delayed .dot { background: var(--text-faint); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pulse-dot { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark"></span>
+    <h1>Task Worker Telemetry</h1>
+    <span class="sub">/ heavy-computations-queue</span>
+  </div>
+  <div class="status-strip">
+    <span class="item"><span class="pulse-dot"></span> gateway online</span>
+    <span class="item" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<main>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="eyebrow">Pipeline · Gateway → Broker → Workers</span>
+      <span class="count" id="inFlightCount">0 in flight</span>
+    </div>
+    <canvas id="pipelineCanvas"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--state-waiting)"></span>waiting</span>
+      <span><span class="dot" style="background:var(--state-active)"></span>active</span>
+      <span><span class="dot" style="background:var(--state-completed)"></span>completed</span>
+      <span><span class="dot" style="background:var(--state-failed)"></span>failed</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="eyebrow">Submit Task</span>
+    </div>
+    <div class="field">
+      <label for="taskType">Task type</label>
+      <select id="taskType">
+        <option value="HEAVY_DATA_COMPUTATION">HEAVY_DATA_COMPUTATION</option>
+        <option value="BULK_NOTIFICATION">BULK_NOTIFICATION</option>
+        <option value="RECONCILIATION">RECONCILIATION</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="metadata">Metadata (JSON)</label>
+      <textarea id="metadata">{ "environment": "dashboard" }</textarea>
+    </div>
+    <div class="submit-row">
+      <button id="submitBtn">Submit task</button>
+      <span class="feedback" id="feedback"></span>
+    </div>
+  </section>
+
+  <section class="panel job-list-panel">
+    <div class="panel-head">
+      <span class="eyebrow">Submitted jobs</span>
+      <span class="count" id="jobCount">0 tracked</span>
+    </div>
+    <table class="job-table">
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Task type</th>
+          <th>Submitted</th>
+          <th>Status</th>
+          <th>Progress</th>
+        </tr>
+      </thead>
+      <tbody id="jobTableBody">
+        <tr class="empty-row"><td colspan="5">No tasks submitted yet — submit one to begin tracking.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var STATUS_ENDPOINT = '/api/tasks/status/';
+  var SUBMIT_ENDPOINT = '/api/tasks/submit-task';
+  var POLL_INTERVAL_MS = 1000;
+  var TERMINAL_STATES = { completed: true, failed: true };
+  var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /** In-memory job registry. No browser storage — state lives only for this session. */
+  var jobs = [];        // { id, taskType, submittedAt, status, progress }
+  var packets = [];     // active canvas packets in flight between nodes
+
+  // ---------------------------------------------------------------------
+  // Clock
+  // ---------------------------------------------------------------------
+  var clockEl = document.getElementById('clock');
+  function tickClock() {
+    var now = new Date();
+    clockEl.textContent = now.toTimeString().slice(0, 8) + ' local';
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  // ---------------------------------------------------------------------
+  // Submit control
+  // ---------------------------------------------------------------------
+  var submitBtn = document.getElementById('submitBtn');
+  var feedbackEl = document.getElementById('feedback');
+  var taskTypeSelect = document.getElementById('taskType');
+  var metadataTextarea = document.getElementById('metadata');
+
+  function setFeedback(message, kind) {
+    feedbackEl.textContent = message;
+    feedbackEl.className = 'feedback' + (kind ? ' ' + kind : '');
+  }
+
+  submitBtn.addEventListener('click', function () {
+    var taskType = taskTypeSelect.value;
+    var metadata;
+    try {
+      metadata = metadataTextarea.value.trim() ? JSON.parse(metadataTextarea.value) : {};
+    } catch (parseErr) {
+      setFeedback('Metadata must be valid JSON.', 'err');
+      return;
+    }
+
+    submitBtn.disabled = true;
+    setFeedback('Submitting…', '');
+
+    fetch(SUBMIT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ taskType: taskType, metadata: metadata }),
+    })
+      .then(function (res) {
+        return res.json().then(function (body) {
+          if (!res.ok) {
+            throw new Error(body.error || ('Request failed with status ' + res.status));
+          }
+          return body;
+        });
+      })
+      .then(function (body) {
+        registerJob(body.jobId, taskType);
+        setFeedback('Enqueued job ' + body.jobId, 'ok');
+        spawnPacket(body.jobId, 'waiting');
+      })
+      .catch(function (err) {
+        setFeedback(err.message, 'err');
+      })
+      .finally(function () {
+        submitBtn.disabled = false;
+      });
+  });
+
+  // ---------------------------------------------------------------------
+  // Job registry + table rendering
+  // ---------------------------------------------------------------------
+  var tbody = document.getElementById('jobTableBody');
+  var jobCountEl = document.getElementById('jobCount');
+  var inFlightCountEl = document.getElementById('inFlightCount');
+
+  function registerJob(id, taskType) {
+    jobs.unshift({
+      id: id,
+      taskType: taskType,
+      submittedAt: new Date(),
+      status: 'waiting',
+      progress: 0,
+    });
+    renderJobTable();
+  }
+
+  function formatTime(date) {
+    return date.toTimeString().slice(0, 8);
+  }
+
+  function formatProgress(progress) {
+    if (typeof progress === 'number') return progress + '%';
+    if (progress && typeof progress === 'object') return JSON.stringify(progress);
+    return '—';
+  }
+
+  function renderJobTable() {
+    if (jobs.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No tasks submitted yet — submit one to begin tracking.</td></tr>';
+    } else {
+      var rows = jobs.map(function (job) {
+        var statusClass = TERMINAL_STATES[job.status] || job.status === 'active' ? job.status : (job.status || 'unknown');
+        return (
+          '<tr data-job-id="' + job.id + '">' +
+            '<td>' + job.id + '</td>' +
+            '<td>' + job.taskType + '</td>' +
+            '<td>' + formatTime(job.submittedAt) + '</td>' +
+            '<td><span class="badge ' + statusClass + '"><span class="dot"></span>' + statusClass + '</span></td>' +
+            '<td>' + formatProgress(job.progress) + '</td>' +
+          '</tr>'
+        );
+      });
+      tbody.innerHTML = rows.join('');
+    }
+
+    jobCountEl.textContent = jobs.length + ' tracked';
+    var inFlight = jobs.filter(function (j) { return !TERMINAL_STATES[j.status]; }).length;
+    inFlightCountEl.textContent = inFlight + ' in flight';
+  }
+
+  // ---------------------------------------------------------------------
+  // Short-polling: GET /api/tasks/status/:id every 1000ms per tracked job
+  // ---------------------------------------------------------------------
+  function pollJob(job) {
+    fetch(STATUS_ENDPOINT + job.id)
+      .then(function (res) {
+        if (!res.ok) throw new Error('status ' + res.status);
+        return res.json();
+      })
+      .then(function (body) {
+        var previousStatus = job.status;
+        job.status = body.status;
+        job.progress = body.progress;
+        if (previousStatus !== job.status) {
+          spawnPacket(job.id, job.status);
+        }
+        renderJobTable();
+      })
+      .catch(function () {
+        // Transient poll failure — leave last-known state, retry on next tick.
+      });
+  }
+
+  setInterval(function () {
+    jobs.forEach(function (job) {
+      if (!TERMINAL_STATES[job.status]) pollJob(job);
+    });
+  }, POLL_INTERVAL_MS);
+
+  // ---------------------------------------------------------------------
+  // Pipeline canvas: Gateway → Broker → Worker Pool
+  // ---------------------------------------------------------------------
+  var canvas = document.getElementById('pipelineCanvas');
+  var ctx = canvas.getContext('2d');
+  var WORKER_COUNT = 5;
+  var nodes = { gateway: null, broker: null, workers: [] };
+
+  function layoutNodes() {
+    var w = canvas.clientWidth;
+    var h = canvas.clientHeight;
+    nodes.gateway = { x: w * 0.12, y: h * 0.5, w: 84, h: 46, label: 'GATEWAY' };
+    nodes.broker = { x: w * 0.48, y: h * 0.5, w: 92, h: 58, label: 'BROKER' };
+    nodes.workers = [];
+    for (var i = 0; i < WORKER_COUNT; i++) {
+      var slotH = h / WORKER_COUNT;
+      nodes.workers.push({
+        x: w * 0.86,
+        y: slotH * i + slotH / 2,
+        w: 82,
+        h: 34,
+        label: 'W' + (i + 1),
+        busy: false,
+      });
+    }
+  }
+
+  function resizeCanvas() {
+    var dpr = window.devicePixelRatio || 1;
+    var rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    layoutNodes();
+  }
+
+  var STATE_COLORS = {
+    waiting: '#f5c542',
+    active: '#4fa3f7',
+    completed: '#4cd787',
+    failed: '#f0554b',
+  };
+
+  function spawnPacket(jobId, status) {
+    var color = STATE_COLORS[status] || '#7c8794';
+    var from, to;
+
+    if (status === 'waiting') {
+      from = nodes.gateway; to = nodes.broker;
+    } else if (status === 'active') {
+      var worker = nodes.workers[Math.floor(Math.random() * nodes.workers.length)];
+      worker.busy = true;
+      worker._releaseAt = performance.now() + 1400;
+      from = nodes.broker; to = worker;
+    } else {
+      // completed / failed — flash near a random worker then fade
+      var w2 = nodes.workers[Math.floor(Math.random() * nodes.workers.length)];
+      from = w2; to = w2;
+    }
+
+    packets.push({
+      jobId: jobId,
+      color: color,
+      from: from,
+      to: to,
+      t: 0,
+      speed: status === 'active' ? 0.012 : 0.02,
+      flash: status === 'completed' || status === 'failed',
+    });
+  }
+
+  function drawNode(node, active) {
+    ctx.save();
+    ctx.strokeStyle = active ? node._glow || '#2a323d' : '#232a33';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#171c22';
+    var x = node.x - node.w / 2, y = node.y - node.h / 2;
+    roundRect(x, y, node.w, node.h, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#7c8794';
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(node.label, node.x, node.y);
+    ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawEdge(a, b) {
+    ctx.save();
+    ctx.strokeStyle = '#1a2027';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(a.x + a.w / 2, a.y);
+    ctx.lineTo(b.x - b.w / 2, b.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawQueueDepth() {
+    var waitingCount = jobs.filter(function (j) { return j.status === 'waiting'; }).length;
+    var capped = Math.min(waitingCount, 8);
+    ctx.save();
+    ctx.fillStyle = '#f5c542';
+    for (var i = 0; i < capped; i++) {
+      var bx = nodes.broker.x - 24 + (i % 4) * 12;
+      var by = nodes.broker.y + 20 + Math.floor(i / 4) * 8;
+      ctx.beginPath();
+      ctx.arc(bx, by, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pointOnEdge(from, to, t) {
+    var ax = from.x + (from === to ? 0 : from.w / 2 * (to.x > from.x ? 1 : -1));
+    var ay = from.y;
+    var bx = to.x - (from === to ? 0 : to.w / 2 * (to.x > from.x ? 1 : -1));
+    var by = to.y;
+    return { x: ax + (bx - ax) * t, y: ay + (by - ay) * t };
+  }
+
+  function render(now) {
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    // release workers whose simulated job has finished
+    nodes.workers.forEach(function (worker) {
+      if (worker.busy && worker._releaseAt && now > worker._releaseAt) {
+        worker.busy = false;
+      }
+    });
+
+    drawEdge(nodes.gateway, nodes.broker);
+    nodes.workers.forEach(function (worker) { drawEdge(nodes.broker, worker); });
+
+    drawNode(nodes.gateway, true);
+    drawNode(nodes.broker, true);
+    nodes.workers.forEach(function (worker) { drawNode(worker, worker.busy); });
+
+    drawQueueDepth();
+
+    // advance + draw packets
+    for (var i = packets.length - 1; i >= 0; i--) {
+      var p = packets[i];
+      p.t += reducedMotion ? 1 : p.speed;
+
+      var pos;
+      if (p.flash) {
+        pos = { x: p.to.x, y: p.to.y };
+      } else {
+        pos = pointOnEdge(p.from, p.to, Math.min(p.t, 1));
+      }
+
+      ctx.save();
+      ctx.fillStyle = p.color;
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 8;
+      var radius = p.flash ? 5 * (1 - p.t) + 2 : 3;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, Math.max(radius, 0.5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      if (p.t >= 1) packets.splice(i, 1);
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+  requestAnimationFrame(render);
+
+  renderJobTable();
+})();
+</script>
+
+</body>
+</html>

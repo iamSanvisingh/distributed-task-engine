@@ -1,0 +1,126 @@
+# ---------------------------------------------------------------------------
+# Distributed Task Worker — full cluster topology
+#
+#   Client → Nginx (LB, :8080) → { app1, app2, app3 } (Node/Express + BullMQ)
+#                                          │
+#                                       Redis (broker + rate-limit + idempotency)
+#
+#   Prometheus (:9090) scrapes app1/2/3 /metrics directly.
+#   Grafana (:3001) reads from Prometheus, dashboards auto-provisioned.
+# ---------------------------------------------------------------------------
+
+x-app-common: &app-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    PORT: 5000
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+  depends_on:
+    redis:
+      condition: service_healthy
+  networks:
+    - task-worker-net
+  restart: unless-stopped
+  # Each replica runs BOTH the HTTP gateway and an in-process BullMQ worker
+  # (see src/server.ts) — this is what "horizontal scaling" demonstrates here:
+  # 3 independent, stateless processes competing fairly for jobs off the same
+  # Redis-backed queue, load-balanced for inbound HTTP by Nginx.
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 512M
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: task-worker-redis
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - task-worker-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Node.js API/Worker replicas -----------------------------------
+  # Defined as three explicit named services (rather than `--scale`) so each
+  # gets a stable, resolvable DNS name that nginx.conf's upstream block and
+  # prometheus.yml's static_configs can reference directly — `docker compose
+  # up --scale app=3` assigns non-deterministic container names/IPs that
+  # neither of those static configs could target reliably.
+  app1:
+    <<: *app-common
+    container_name: task-worker-app1
+    hostname: app1
+
+  app2:
+    <<: *app-common
+    container_name: task-worker-app2
+    hostname: app2
+
+  app3:
+    <<: *app-common
+    container_name: task-worker-app3
+    hostname: app3
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: task-worker-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app1
+      - app2
+      - app3
+    networks:
+      - task-worker-net
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: task-worker-prometheus
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app1
+      - app2
+      - app3
+    networks:
+      - task-worker-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: task-worker-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - task-worker-net
+    restart: unless-stopped
+
+networks:
+  task-worker-net:
+    driver: bridge
+
+volumes:
+  redis-data:

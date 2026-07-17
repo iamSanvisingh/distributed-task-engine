@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+
+# Single job: scrape each app replica directly (not through Nginx) so every
+# data point keeps its `instance` label (app1/app2/app3) instead of being
+# blended together by the load balancer.
+scrape_configs:
+  - job_name: 'task-worker-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['app1:5000', 'app2:5000', 'app3:5000']
